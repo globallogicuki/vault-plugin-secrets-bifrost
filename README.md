@@ -1,6 +1,6 @@
 # vault-plugin-secrets-bifrost
 
-> **Status: 🎨 Design phase.** No plugin code yet - the design is being finalised in [`docs/`](./docs). Build, install, and usage sections below are intentionally marked _TODO_ until the design is signed off.
+> **Status: 🚧 Phase 1 (MVP) in progress.** The dynamic virtual-key path (`config`, `roles/<name>`, `creds/<role>`) is implemented with unit and backend tests against a mock Bifrost. Provider keys and static-role rotation are future phases (see [`docs/09-roadmap.md`](./docs/09-roadmap.md)). The Go module path is a placeholder (`github.com/example/...`) - see [Building](#building).
 
 A [HashiCorp Vault](https://www.vaultproject.io/) **secrets engine** plugin that dynamically manages credentials for [Bifrost](https://docs.getbifrost.ai/overview), the high-performance AI gateway.
 
@@ -52,11 +52,47 @@ The full design framework lives in [`docs/`](./docs). Start with [`docs/README.m
 
 ## Quickstart
 
-_TODO - pending design sign-off._ Will cover building the plugin binary, `vault plugin register`, enabling at a mount, writing `config` + a `role`, and reading `creds/<role>`.
+Requires Go (the toolchain version is pinned in `go.mod`) and a Vault binary. The commands below use a local dev Vault and a mock or real Bifrost.
+
+```sh
+# 1. Build the plugin into a directory Vault can load.
+make build            # -> vault/plugins/vault-plugin-secrets-bifrost
+
+# 2. Run Vault in dev mode pointed at that directory.
+vault server -dev -dev-root-token-id=root -dev-plugin-dir=./vault/plugins &
+export VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root
+
+# 3. Register the plugin and enable it at the bifrost/ mount.
+make register
+
+# 4. Configure the Bifrost connection (management bearer token).
+vault write bifrost/config \
+    address=https://bifrost.internal:8080 \
+    management_token=$BIFROST_MANAGEMENT_TOKEN
+
+# 5. Define a role templating the virtual key's scope.
+vault write bifrost/roles/web-app \
+    provider_configs='[{"provider":"openai","allowed_models":["gpt-4o"],"weight":1}]' \
+    rate_limit='{"request_max_limit":1000,"request_reset_duration":"1h"}' \
+    ttl=1h max_ttl=24h
+
+# 6. Issue a dynamic virtual key. Revoking the lease deletes it in Bifrost.
+vault read bifrost/creds/web-app
+vault lease revoke <lease_id>
+```
+
+Rotate the management token on demand with `vault write bifrost/config/rotate-root management_token=<new>`. Rotation is operator-assisted: Bifrost has no confirmed API to mint management tokens, so you supply the replacement (see [`docs/06-lease-lifecycle.md`](./docs/06-lease-lifecycle.md)).
 
 ## Building
 
-_TODO - pending design sign-off._
+```sh
+make build     # compile the plugin into vault/plugins/
+make test      # unit + backend tests against a mock Bifrost
+make testacc   # acceptance tests (needs BIFROST_ADDR + BIFROST_MANAGEMENT_TOKEN)
+make lint      # go vet + gofmt
+```
+
+The Go module path in `go.mod` is currently the placeholder `github.com/example/vault-plugin-secrets-bifrost`. Rename it to the real org/repo once known - it is the only value that needs changing across imports.
 
 ## Licence
 
