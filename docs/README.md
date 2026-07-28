@@ -17,6 +17,7 @@ The aim is to agree the design here **before** writing plugin code. Each documen
 | 7 | [07-security.md](./07-security.md) | Threat model, least privilege, secrets handling, audit |
 | 8 | [08-testing-and-dev.md](./08-testing-and-dev.md) | Local dev harness, unit/acceptance tests, CI |
 | 9 | [09-roadmap.md](./09-roadmap.md) | Phased delivery plan |
+| 10 | [10-api-spec.md](./10-api-spec.md) | Vault-facing API reference: paths, fields, payloads, status codes, ACL |
 
 ## Status
 

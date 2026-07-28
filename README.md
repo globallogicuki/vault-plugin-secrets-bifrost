@@ -49,6 +49,7 @@ The full design framework lives in [`docs/`](./docs). Start with [`docs/README.m
 - [Security](./docs/07-security.md)
 - [Testing & dev](./docs/08-testing-and-dev.md)
 - [Roadmap](./docs/09-roadmap.md)
+- [API specification](./docs/10-api-spec.md)
 
 ## Quickstart
 
