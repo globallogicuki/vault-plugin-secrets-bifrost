@@ -102,3 +102,38 @@ func TestBuildCreateVKRequest_MapsRole(t *testing.T) {
 		t.Fatal("rate_limit should be forwarded")
 	}
 }
+
+func TestRenderName_IncludesDisplayNameAndRole(t *testing.T) {
+	name, err := renderName(defaultNameTemplate, "web-app", "userpass-alice")
+	if err != nil {
+		t.Fatalf("renderName: %v", err)
+	}
+	if !strings.Contains(name, "web-app") {
+		t.Errorf("name should contain the role: %q", name)
+	}
+	if !strings.Contains(name, "userpass-alice") {
+		t.Errorf("name should contain the display name for traceability: %q", name)
+	}
+	// Two issues must not collide (random suffix differs).
+	other, _ := renderName(defaultNameTemplate, "web-app", "userpass-alice")
+	if name == other {
+		t.Errorf("expected unique names per issue, got %q twice", name)
+	}
+}
+
+func TestSanitiseNamePart(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"userpass-alice", "userpass-alice"},
+		{"token", "token"},
+		{"alice@example.com", "alice-example-com"},
+		{"weird  name!!", "weird-name"},
+		{"---", "unknown"},
+		{"", "unknown"},
+		{"OK_123", "OK_123"},
+	}
+	for _, c := range cases {
+		if got := sanitiseNamePart(c.in); got != c.want {
+			t.Errorf("sanitiseNamePart(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

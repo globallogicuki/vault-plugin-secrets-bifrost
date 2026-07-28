@@ -47,7 +47,7 @@ func (b *backend) pathCredsRead(ctx context.Context, req *logical.Request, d *fr
 	// Generate the unique VK name up front so we can record it in the WAL
 	// before calling Bifrost. If a crash happens between create and lease
 	// persist, walRollback finds the orphan by this name (docs/06).
-	name, err := renderName(role.NameTemplate, roleName)
+	name, err := renderName(role.NameTemplate, roleName, req.DisplayName)
 	if err != nil {
 		return nil, err
 	}
@@ -127,9 +127,11 @@ func buildCreateVKRequest(role *bifrostRole, roleName, name string, req *logical
 	return body
 }
 
-// renderName expands {{role}} and {{random}} in a name template, producing a
-// unique virtual-key name per issue so concurrent reads don't collide.
-func renderName(tmpl, roleName string) (string, error) {
+// renderName expands {{role}}, {{display_name}} and {{random}} in a name
+// template, producing a unique virtual-key name per issue so concurrent reads
+// don't collide. displayName is the calling token/entity's display name (e.g.
+// "userpass-alice"), included so an issued key is traceable to its requester.
+func renderName(tmpl, roleName, displayName string) (string, error) {
 	if tmpl == "" {
 		tmpl = defaultNameTemplate
 	}
@@ -138,6 +140,33 @@ func renderName(tmpl, roleName string) (string, error) {
 		return "", fmt.Errorf("failed to generate name suffix: %w", err)
 	}
 	out := strings.ReplaceAll(tmpl, "{{role}}", roleName)
+	out = strings.ReplaceAll(out, "{{display_name}}", sanitiseNamePart(displayName))
 	out = strings.ReplaceAll(out, "{{random}}", suffix)
 	return out, nil
+}
+
+// sanitiseNamePart reduces a display name to characters safe for a Bifrost
+// virtual-key name ([a-zA-Z0-9_-]); any other run collapses to a single "-".
+// An empty or fully stripped value becomes "unknown" so the template slot is
+// never left blank.
+func sanitiseNamePart(s string) string {
+	var b strings.Builder
+	lastDash := false
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
+			b.WriteRune(r)
+			lastDash = false
+		default:
+			if !lastDash {
+				b.WriteByte('-')
+				lastDash = true
+			}
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "unknown"
+	}
+	return out
 }

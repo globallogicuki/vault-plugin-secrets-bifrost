@@ -13,7 +13,7 @@ import (
 const (
 	rolesStoragePrefix = "role/"
 
-	defaultNameTemplate = "vault-{{role}}-{{random}}"
+	defaultNameTemplate = "vault-{{display_name}}-{{role}}-{{random}}"
 )
 
 // bifrostRole templates the virtual keys that creds/<name> issues. It maps onto
@@ -63,7 +63,7 @@ func pathRoles(b *backend) []*framework.Path {
 		"name_template": {
 			Type:        framework.TypeString,
 			Default:     defaultNameTemplate,
-			Description: "Template for the virtual key name. Supports {{role}} and {{random}}.",
+			Description: "Template for the virtual key name. Supports {{role}}, {{display_name}} (the calling token/entity's display name, sanitised) and {{random}}.",
 		},
 		"set_expires_at": {
 			Type:        framework.TypeBool,
