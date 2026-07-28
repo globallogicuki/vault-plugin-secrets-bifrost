@@ -35,5 +35,11 @@ Apply these conventions to the README, all files under `docs/`, and any new Mark
 
 ## Commits
 
+- Use **[Conventional Commits](https://www.conventionalcommits.org/)**: `type(scope): subject`.
+  - **Types:** `feat`, `fix`, `docs`, `refactor`, `test`, `build`, `chore`, `ci`, `perf`, `style`, `revert`.
+  - **Scope** is optional and names the affected area, e.g. `feat(creds):`, `docs(api-spec):`, `fix(client):`.
+  - **Subject:** imperative mood, lower case, no trailing full stop.
+  - **Breaking changes:** add `!` before the colon (`feat(config)!:`) and/or a `BREAKING CHANGE:` footer.
+  - Example: `feat(creds): include caller display name in virtual-key names`.
 - Do **not** add a `Co-Authored-By: Claude` trailer (or any Claude/AI attribution) to commit messages.
 - Keep messages concise: a short imperative subject, followed by a body explaining the why when the change is non-trivial.
