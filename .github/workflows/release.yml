@@ -1,5 +1,12 @@
 # Publish the plugin binaries for a vX.Y.Z tag.
 #
+# Three entry points, one code path:
+#
+#   - called by release-please.yml when a release PR is merged (the normal one),
+#     which passes `attach_to_existing` because the release already exists;
+#   - a `vX.Y.Z` tag pushed by hand, which creates the release itself;
+#   - `workflow_dispatch`, which defaults to a dry run.
+#
 # One job, so the binaries and their checksums are produced by the same run and
 # cannot diverge. Vault verifies the plugin's SHA256 on every plugin launch, so a
 # checksum computed anywhere other than alongside the build is a liability.
@@ -23,6 +30,22 @@ on:
         required: false
         type: boolean
         default: true
+  workflow_call:
+    inputs:
+      tag:
+        description: "Tag to release, e.g. v0.1.0"
+        required: true
+        type: string
+      attach_to_existing:
+        description: "The release already exists; upload the assets to it instead of creating it"
+        required: false
+        type: boolean
+        default: false
+      dry_run:
+        description: "Build and verify without publishing anything"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write # create the release and upload its assets
@@ -31,7 +54,7 @@ permissions:
 
 # Never interrupt a release mid-flight.
 concurrency:
-  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -46,8 +69,9 @@ jobs:
       - name: Resolve and validate the tag
         id: rel
         env:
-          INPUT_TAG: ${{ github.event.inputs.tag }}
-          INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_ATTACH: ${{ inputs.attach_to_existing }}
         run: |
           set -euo pipefail
           TAG="${INPUT_TAG:-$GITHUB_REF_NAME}"
@@ -59,15 +83,18 @@ jobs:
             *-*) PRERELEASE=true ;;
             *)   PRERELEASE=false ;;
           esac
-          # dry_run exists only for workflow_dispatch; a tag push always publishes.
+          # Both inputs are empty on a tag push, which always publishes and
+          # always creates its own release.
           DRY_RUN="${INPUT_DRY_RUN:-false}"
+          ATTACH="${INPUT_ATTACH:-false}"
           {
             echo "tag=$TAG"
             echo "version=${TAG#v}"
             echo "prerelease=$PRERELEASE"
             echo "dry_run=$DRY_RUN"
+            echo "attach=$ATTACH"
           } >> "$GITHUB_OUTPUT"
-          echo "Releasing $TAG (version ${TAG#v}, prerelease=$PRERELEASE, dry_run=$DRY_RUN)"
+          echo "Releasing $TAG (version ${TAG#v}, prerelease=$PRERELEASE, dry_run=$DRY_RUN, attach=$ATTACH)"
 
       # Build from the tag's content, never from a branch head.
       - uses: actions/checkout@v7
@@ -89,7 +116,7 @@ jobs:
       # Releases are never re-cut. action-gh-release would happily update an
       # existing release, so this is the guard that enforces it.
       - name: Check the release does not already exist
-        if: steps.rel.outputs.dry_run != 'true'
+        if: steps.rel.outputs.dry_run != 'true' && steps.rel.outputs.attach != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.rel.outputs.tag }}
@@ -97,6 +124,20 @@ jobs:
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "::error::release $TAG already exists; cut a new patch tag instead"
+            exit 1
+          fi
+
+      # The mirror image, for the release-please path: the release is supposed to
+      # exist already, so its absence means the caller passed the wrong tag.
+      - name: Check the release exists
+        if: steps.rel.outputs.dry_run != 'true' && steps.rel.outputs.attach == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::release $TAG does not exist, but attach_to_existing was set"
             exit 1
           fi
 
@@ -178,6 +219,7 @@ jobs:
         run: |
           set -euo pipefail
           cat > release-notes.md <<'TEMPLATE'
+          <!-- install-instructions -->
           ## Install
 
           Vault plugins are native binaries. Pick the architecture of the Vault
@@ -216,7 +258,7 @@ jobs:
       # Assets are listed explicitly rather than globbed from dist/, so a broken
       # VERSION derivation fails the run instead of publishing mislabelled files.
       - name: Create the release
-        if: steps.rel.outputs.dry_run != 'true'
+        if: steps.rel.outputs.dry_run != 'true' && steps.rel.outputs.attach != 'true'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.rel.outputs.tag }}
@@ -233,6 +275,38 @@ jobs:
             dist/vault-plugin-secrets-bifrost_${{ steps.rel.outputs.version }}_linux_amd64.spdx.json
             dist/vault-plugin-secrets-bifrost_${{ steps.rel.outputs.version }}_linux_arm64.spdx.json
             dist/SHA256SUMS
+
+      # release-please already wrote the release and its notes, so only the
+      # assets and the install section are missing. --clobber and the marker
+      # check make a re-run of a half-finished publish safe.
+      - name: Upload the assets to the existing release
+        if: steps.rel.outputs.dry_run != 'true' && steps.rel.outputs.attach == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.rel.outputs.tag }}
+          VERSION: ${{ steps.rel.outputs.version }}
+        run: |
+          set -euo pipefail
+          B="dist/vault-plugin-secrets-bifrost_${VERSION}_linux"
+          ASSETS="${B}_amd64 ${B}_arm64 ${B}_amd64.spdx.json ${B}_arm64.spdx.json dist/SHA256SUMS"
+          # gh upload does not have fail_on_unmatched_files, so check first.
+          for f in $ASSETS; do
+            if [ ! -f "$f" ]; then
+              echo "::error::expected asset $f was not built"
+              exit 1
+            fi
+          done
+          # shellcheck disable=SC2086
+          gh release upload "$TAG" $ASSETS --clobber
+
+          gh release view "$TAG" --json body -q .body > current-notes.md
+          if grep -qF '<!-- install-instructions -->' current-notes.md; then
+            echo "install section already present, leaving the notes alone"
+          else
+            printf '%s\n\n%s\n' "$(cat current-notes.md)" "$(cat release-notes.md)" \
+              > combined-notes.md
+            gh release edit "$TAG" --notes-file combined-notes.md
+          fi
 
       - name: Dry run summary
         if: steps.rel.outputs.dry_run == 'true'

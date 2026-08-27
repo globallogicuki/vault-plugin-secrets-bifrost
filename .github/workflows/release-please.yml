@@ -1,0 +1,64 @@
+# Turn merges to main into releases, driven by Conventional Commits.
+#
+# Two steps, deliberately separated by a human:
+#
+#   1. Any push to main updates a running "chore(main): release X.Y.Z" PR. The
+#      version comes from the commit types since the last release: `feat` bumps
+#      the minor, `fix` the patch, `feat!` the minor while below 1.0.0.
+#   2. Merging that PR tags the release, publishes its notes, and calls
+#      release.yml to build and attach the binaries.
+#
+# So nothing is published by accident: a merge to main only ever proposes a
+# version, and the release PR is the approval gate.
+#
+# release.yml is invoked with `uses:` rather than left to fire on the tag push,
+# because a tag created with GITHUB_TOKEN does not trigger other workflows. The
+# build logic therefore lives in exactly one file and no PAT is needed.
+#
+# See docs/12-build-and-release.md.
+name: Release Please
+
+on:
+  push:
+    branches:
+      - main
+
+permissions: {}
+
+# A second push to main while a release is publishing must not race it.
+concurrency:
+  group: release-please-main
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # commit the changelog, create the tag and the release
+      pull-requests: write # open and groom the release PR
+    outputs:
+      released: ${{ steps.rp.outputs.releases_created }}
+      tag: ${{ steps.rp.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v5.0.0
+        id: rp
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          target-branch: main
+
+  # Only reached by the merge of a release PR: that is the push which makes
+  # release-please tag and set releases_created.
+  publish:
+    needs: propose
+    if: needs.propose.outputs.released == 'true'
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.propose.outputs.tag }}
+      # release-please has already created the release and its notes, so build
+      # the binaries and attach them rather than creating it a second time.
+      attach_to_existing: true
