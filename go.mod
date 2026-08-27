@@ -1,7 +1,4 @@
-// NOTE: `github.com/example/...` is a placeholder module path. Rename it to the
-// real org/repo (e.g. github.com/<org>/vault-plugin-secrets-bifrost) once known -
-// it is the only value that needs changing across the codebase's imports.
-module github.com/example/vault-plugin-secrets-bifrost
+module github.com/globallogicuki/vault-plugin-secrets-bifrost
 
 go 1.25.7
 
