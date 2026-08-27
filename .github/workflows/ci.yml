@@ -1,0 +1,109 @@
+# Lint, test and cross-compile on every pull request and every push to main.
+#
+# Deliberately a thin wrapper over the Makefile: build flags live in exactly one
+# place, so the binary CI produces is the binary `make dist` produces locally and
+# its SHA256 cannot drift. See docs/12-build-and-release.md.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Nothing here writes to the repository.
+permissions:
+  contents: read
+
+# Supersede in-flight runs for a pull request, but never cancel a main build.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Use exactly the toolchain setup-go installed from go.mod. A mismatch then
+  # fails loudly instead of silently downloading a different version, which
+  # would change the release binary's bytes.
+  GOTOOLCHAIN: local
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # gofmt + go vet. Needs no tooling beyond the Go toolchain.
+      - name: Format and vet
+        run: make lint
+
+      # Fails if go.mod/go.sum are untidy or a module's contents do not match
+      # its recorded hash.
+      - name: Module hygiene
+        run: make mod-check
+
+      # Keep the version in step with GOLANGCI_VERSION in the Makefile.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13.1
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # -race needs cgo, so CGO_ENABLED is deliberately left at its default.
+      # `make dist` sets CGO_ENABLED=0 per build instead.
+      - name: Test with race detector
+        run: make test-ci
+
+      - name: Report coverage
+        run: |
+          {
+            echo '### Test coverage'
+            echo
+            echo '```'
+            go tool cover -func=coverage.out | tail -1
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build for the host
+        run: make build
+
+      # Runs the real release build path, so a cross-compilation break is caught
+      # on the pull request rather than on a tag. The version is a throwaway.
+      - name: Cross-compile release binaries
+        run: make dist VERSION=0.0.0-ci
+
+      # Vault execs the plugin inside its own container. A dynamically linked
+      # binary fails there with "exec format error", so assert what we built.
+      - name: Check the binaries are static Linux executables
+        run: |
+          set -euo pipefail
+          for f in dist/vault-plugin-secrets-bifrost_0.0.0-ci_linux_*; do
+            info=$(file -b "$f")
+            echo "$f: $info"
+            case "$info" in
+              *"ELF 64-bit LSB executable"*"statically linked"*) ;;
+              *) echo "::error::$f is not a statically linked 64-bit ELF executable"; exit 1 ;;
+            esac
+          done

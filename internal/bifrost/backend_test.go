@@ -2,6 +2,7 @@ package bifrost
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/hashicorp/vault/sdk/logical"
@@ -306,16 +307,6 @@ func TestRotateRoot_SwapsToken(t *testing.T) {
 
 // isRetryable reports whether err is (or wraps) a retryableError.
 func isRetryable(err error) bool {
-	for err != nil {
-		if _, ok := err.(*retryableError); ok {
-			return true
-		}
-		type unwrapper interface{ Unwrap() error }
-		u, ok := err.(unwrapper)
-		if !ok {
-			return false
-		}
-		err = u.Unwrap()
-	}
-	return false
+	var re *retryableError
+	return errors.As(err, &re)
 }

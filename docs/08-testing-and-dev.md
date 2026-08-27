@@ -6,8 +6,10 @@
 |-------|----------------|---------|
 | Unit | Path logic, role→request mapping, error/idempotency handling | `go test`, table-driven |
 | Backend (in-memory Vault) | Path CRUD, secret framing, renew/revoke callbacks against a **mock Bifrost** | Vault SDK `logical.TestBackendConfig` + `httptest` |
-| Acceptance | Real Vault + real (or dockerised) Bifrost end-to-end | `VAULT_ACC=1`, `dev` mode |
+| Acceptance | Issue and revoke against a real Bifrost | `VAULT_ACC=1`, `Factory` + `logical.InmemStorage` |
 | Manual/dev harness | Human smoke test | scripts + local binaries |
+
+The first three all run under `go test ./...`; the acceptance layer self-skips when `VAULT_ACC` is unset, so a plain `go test` is always safe.
 
 ## Mock Bifrost server
 
@@ -30,7 +32,12 @@ func TestAcc_IssueAndRevoke(t *testing.T) {
 }
 ```
 
-They: write real `config`, create a role, read `creds/<role>`, call Bifrost with the returned `sk-bf-…` to confirm it works, revoke the lease, then confirm the key no longer works.
+Two facts about the current implementation, both worth knowing before extending it:
+
+- **No Vault server is needed.** `acceptance_test.go` builds the backend in-process with `Factory` plus `logical.InmemStorage`. The "real" half is Bifrost, not Vault. Run it with nothing but `BIFROST_ADDR`, `BIFROST_MANAGEMENT_TOKEN` and `VAULT_ACC=1`.
+- **It is currently shallower than the design intends.** A `// TODO` marks the missing half: it does not yet call Bifrost with the issued `sk-bf-…` key, so it proves that issue-then-revoke returns no error, not that the key ever worked or later stopped working. Closing that TODO is what makes this layer meaningful.
+
+**No CI workflow runs them.** They need a live Bifrost and a real management token, and the safe triggers are limited: a `pull_request`-triggered run on a fork would expose the token to untrusted code, so `workflow_dispatch` or a scheduled run against a dedicated test tenant is the only sound option. Until there is a Bifrost instance to point at, `make testacc` is a local tool.
 
 ## Local dev harness
 
@@ -54,21 +61,74 @@ vault read  bifrost/creds/demo
 
 A `docker-compose.yml` (dev) can stand up Bifrost + Vault together for one-command E2E.
 
-## CI outline
+## CI
 
-- `go vet`, `gofmt`/`goimports`, `golangci-lint`.
-- `go test ./...` (unit + backend/mock) on every push.
-- Acceptance tests run in a dedicated job with a dockerised Bifrost + Vault dev server (nightly or on-label, since they need real services).
-- Build matrix: linux/amd64, linux/arm64, darwin/arm64 (Go plugin binaries are platform-specific; no Windows).
-- Release: tagged builds produce per-platform binaries + sha256 sums for `vault plugin register`.
+Two workflows, both thin wrappers over `make` so build flags exist in one place only. See [12](./12-build-and-release.md) for the release side.
 
-## Makefile targets (planned)
+### Every pull request and push to main - `.github/workflows/ci.yml`
+
+| Job | What it runs |
+|-----|--------------|
+| `lint` | `make lint` (gofmt assertion + `go vet`), `make mod-check`, then `golangci-lint` |
+| `test` | `make test-ci` - race detector on, coverage summarised in the run |
+| `build` | `make build`, then the real `make dist`, then asserts both binaries are statically linked ELF |
+
+Three jobs rather than one, so a lint failure cannot mask a test failure. The `build` job calls the release build path itself, so a cross-compilation break surfaces on the pull request rather than on a tag.
+
+**No Go version matrix.** `go.mod` pins the toolchain, this is a single binary artefact rather than a library consumed at many Go versions, and the release binary's checksum is toolchain-dependent - so one pinned toolchain is the point. `GOTOOLCHAIN: local` is set so a mismatch fails loudly instead of silently downloading a different toolchain.
+
+### On a `vX.Y.Z` tag - `.github/workflows/release.yml`
+
+Guards, then `make lint` and `make test-ci`, then `make checksums`, then SBOM and provenance, then the release. Full description in [12](./12-build-and-release.md).
+
+### Linting
+
+| Tool | How it arrives |
+|------|----------------|
+| `gofmt` | `make fmt-check`, plus golangci-lint's `formatters` block |
+| `goimports` | golangci-lint's `formatters` block, with `local-prefixes` set to the module path |
+| `go vet` | `make vet` |
+| golangci-lint (v2 config, `.golangci.yml`) | `golangci/golangci-lint-action` in CI; `make lint-golangci` locally |
+
+`make lint` **deliberately excludes golangci-lint**: it must work on any machine with only the Go toolchain installed. `make lint-all` runs both, and CI runs both, so nothing is lost. Do not "fix" this by adding the dependency.
+
+`gofmt -l` lists offending files but exits 0, so `make fmt-check` asserts on its output rather than its exit status. That is the only reason the target is a shell block instead of one command.
+
+### Bumped by hand
+
+Dependabot covers Go modules and action versions. These are deliberately not automated:
+
+| Thing | Where | Why manual |
+|-------|-------|------------|
+| The `go` directive | `go.mod` | Changes the release binary's SHA256. A toolchain bump is a release decision. |
+| golangci-lint version | `GOLANGCI_VERSION` in `Makefile`, `version:` in `ci.yml` | Duplicated in two files; a new minor can add linters and turn a green build red. |
+| Vault chart and image versions | `docs/11-kubernetes-deployment.md` | Documentation, not a dependency of this repo. |
+
+Note that go1.25.7 - the pinned patch release - fails with `go: no such tool "covdata"` when `-coverprofile` instruments a package that has no test files. `make test-ci` therefore instruments only packages that have tests. The comment on `COVER_PKGS` in the `Makefile` records the detail; the consequence is that the reported coverage figure is of tested packages, not of the whole module.
+
+## Makefile targets
 
 | Target | Action |
 |--------|--------|
-| `build` | compile plugin into `vault/plugins/` |
-| `register` | `vault plugin register` + `secrets enable` |
-| `test` | unit + backend tests |
-| `testacc` | `VAULT_ACC=1 go test` |
-| `lint` | vet + linters |
-| `clean` | remove build artifacts |
+| `build` | Compile the plugin into `vault/plugins/` for the host platform |
+| `dist` | Cross-compile `linux/amd64` + `linux/arm64` into `dist/` with release flags |
+| `checksums` | `dist`, plus `dist/SHA256SUMS`. Depends on `dist`, so one invocation is enough |
+| `register` | `vault plugin register` + `secrets enable` against a dev Vault |
+| `test` | Unit + backend tests (`go test ./...`) |
+| `test-ci` | What CI runs: race detector, atomic coverage into `coverage.out` |
+| `testacc` | `VAULT_ACC=1 go test` - needs `BIFROST_ADDR` + `BIFROST_MANAGEMENT_TOKEN` |
+| `fmt` | `gofmt -w .` |
+| `fmt-check` | Fail if any file needs formatting |
+| `vet` | `go vet ./...` |
+| `lint` | `fmt-check` + `vet`. No tooling beyond Go required |
+| `lint-golangci` | `golangci-lint run`, with an install hint if it is missing |
+| `lint-all` | `lint` + `lint-golangci` |
+| `mod-check` | `go mod tidy -diff` + `go mod verify` |
+| `clean` | Remove `vault/plugins/`, `dist/`, `coverage.out` |
+
+`VERSION` defaults to the nearest git tag with the leading `v` stripped, falling back to `0.0.0-dev`, so a hand-built binary cannot be mislabelled as a release.
+
+## Related
+
+- [12](./12-build-and-release.md) - build flags, release pipeline, reproducibility
+- [09](./09-roadmap.md) - phased delivery

@@ -1,6 +1,9 @@
 # vault-plugin-secrets-bifrost
 
-> **Status: 🚧 Phase 1 (MVP) in progress.** The dynamic virtual-key path (`config`, `roles/<name>`, `creds/<role>`) is implemented with unit and backend tests against a mock Bifrost. Provider keys and static-role rotation are future phases (see [`docs/09-roadmap.md`](./docs/09-roadmap.md)). The Go module path is a placeholder (`github.com/example/...`) - see [Building](#building).
+[![CI](https://github.com/globallogicuki/vault-plugin-secrets-bifrost/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/globallogicuki/vault-plugin-secrets-bifrost/actions/workflows/ci.yml)
+[![Licence: MPL-2.0](https://img.shields.io/badge/licence-MPL--2.0-blue.svg)](./LICENSE)
+
+> **Status: 🚧 Phase 1 (MVP) in progress.** The dynamic virtual-key path (`config`, `roles/<name>`, `creds/<role>`) is implemented with unit and backend tests against a mock Bifrost. Provider keys and static-role rotation are future phases (see [`docs/09-roadmap.md`](./docs/09-roadmap.md)).
 
 A [HashiCorp Vault](https://www.vaultproject.io/) **secrets engine** plugin that dynamically manages credentials for [Bifrost](https://docs.getbifrost.ai/overview), the high-performance AI gateway.
 
@@ -84,16 +87,58 @@ vault lease revoke <lease_id>
 
 Rotate the management token on demand with `vault write bifrost/config/rotate-root management_token=<new>`. Rotation is operator-assisted: Bifrost has no confirmed API to mint management tokens, so you supply the replacement (see [`docs/06-lease-lifecycle.md`](./docs/06-lease-lifecycle.md)).
 
+## Install from a release
+
+Releases publish static `linux/amd64` and `linux/arm64` binaries with a `SHA256SUMS` file, an SPDX SBOM per binary, and a SLSA build provenance attestation. There is no container image - Vault `exec`s a native binary from `plugin_directory` and never pulls one.
+
+```sh
+TAG=v0.1.0
+REPO=globallogicuki/vault-plugin-secrets-bifrost
+ARCH=amd64                      # or arm64
+PLUGIN_DIR=/vault/plugins       # must match plugin_directory in Vault's config
+BIN=vault-plugin-secrets-bifrost_${TAG#v}_linux_$ARCH
+BASE=https://github.com/$REPO/releases/download/$TAG
+
+# 1. Download the binary and the checksum file.
+curl -fsSLO "$BASE/$BIN"
+curl -fsSLO "$BASE/SHA256SUMS"
+
+# 2. Verify integrity. SHA256SUMS covers both architectures.
+sha256sum --ignore-missing -c SHA256SUMS
+
+# 3. Optional: verify it was built by this repository's release workflow.
+gh attestation verify "$BIN" -R "$REPO"
+
+# 4. Install into Vault's plugin_directory and register it. Vault re-checks
+#    this SHA256 on every plugin launch, so take it from SHA256SUMS.
+install -m 0755 "$BIN" "$PLUGIN_DIR/vault-plugin-secrets-bifrost"
+vault plugin register \
+    -sha256="$(awk -v a="$ARCH" '$2 ~ "_linux_"a"$" {print $1}' SHA256SUMS)" \
+    -version="$TAG" \
+    secret vault-plugin-secrets-bifrost
+vault secrets enable -path=bifrost -plugin-version="$TAG" vault-plugin-secrets-bifrost
+```
+
+Note the two spellings of the version: the tag and Vault's plugin catalogue use `v0.1.0`, asset filenames use `0.1.0`.
+
 ## Building
 
 ```sh
-make build     # compile the plugin into vault/plugins/
-make test      # unit + backend tests against a mock Bifrost
-make testacc   # acceptance tests (needs BIFROST_ADDR + BIFROST_MANAGEMENT_TOKEN)
-make lint      # go vet + gofmt
+make build      # compile the plugin into vault/plugins/ for this host
+make test       # unit + backend tests against a mock Bifrost
+make test-ci    # what CI runs: race detector + coverage
+make testacc    # acceptance tests (needs BIFROST_ADDR + BIFROST_MANAGEMENT_TOKEN)
+make lint       # gofmt check + go vet, no extra tooling needed
+make lint-all   # the above, plus golangci-lint
+make checksums  # cross-compile linux/amd64 + arm64 into dist/, with SHA256SUMS
 ```
 
-The Go module path in `go.mod` is currently the placeholder `github.com/example/vault-plugin-secrets-bifrost`. Rename it to the real org/repo once known - it is the only value that needs changing across imports.
+The Go module path is `github.com/globallogicuki/vault-plugin-secrets-bifrost`.
+
+Deployment is split into two independent streams, coupled only by the artefact contract restated in both:
+
+- [`docs/12-build-and-release.md`](./docs/12-build-and-release.md) - building and publishing the plugin artefact.
+- [`docs/11-kubernetes-deployment.md`](./docs/11-kubernetes-deployment.md) - pulling that artefact into a Vault cluster on Kubernetes.
 
 ## Licence
 

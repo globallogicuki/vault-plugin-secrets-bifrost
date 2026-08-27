@@ -1,0 +1,50 @@
+# Dependency updates for the Go module and the workflow actions.
+#
+# Commit prefixes are set per ecosystem so Dependabot's messages satisfy the
+# Conventional Commits rule in CLAUDE.md: `build(deps): bump ...` for Go
+# modules, `ci(deps): bump ...` for actions.
+#
+# Deliberately NOT bumped here, and therefore bumped by hand:
+#   - the `go` directive in go.mod (changing it changes the release binary's
+#     SHA256, so it is a release decision, not a dependency update)
+#   - GOLANGCI_VERSION in the Makefile and the matching `version:` in
+#     .github/workflows/ci.yml, which must move together
+version: 2
+
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      # api and sdk are released in step and a mismatched pair is a common
+      # source of breakage, so review them as one change.
+      hashicorp-vault:
+        patterns:
+          - github.com/hashicorp/vault/api
+          - github.com/hashicorp/vault/sdk
+      # Roughly a hundred indirect dependencies come in via the Vault SDK.
+      # Batch their minor and patch bumps so they cannot flood the queue.
+      indirect-minor-patch:
+        dependency-type: indirect
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      actions:
+        patterns:
+          - "*"

@@ -9,7 +9,7 @@ import (
 	"github.com/hashicorp/vault/api"
 	"github.com/hashicorp/vault/sdk/plugin"
 
-	"github.com/example/vault-plugin-secrets-bifrost/internal/bifrost"
+	"github.com/globallogicuki/vault-plugin-secrets-bifrost/internal/bifrost"
 )
 
 func main() {

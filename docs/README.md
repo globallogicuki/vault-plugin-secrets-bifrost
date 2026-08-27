@@ -18,6 +18,10 @@ The aim is to agree the design here **before** writing plugin code. Each documen
 | 8 | [08-testing-and-dev.md](./08-testing-and-dev.md) | Local dev harness, unit/acceptance tests, CI |
 | 9 | [09-roadmap.md](./09-roadmap.md) | Phased delivery plan |
 | 10 | [10-api-spec.md](./10-api-spec.md) | Vault-facing API reference: paths, fields, payloads, status codes, ACL |
+| 11 | [11-kubernetes-deployment.md](./11-kubernetes-deployment.md) | **Consuming** the artefact: init container, Helm values, registration, upgrades |
+| 12 | [12-build-and-release.md](./12-build-and-release.md) | **Producing** the artefact: cross-compilation, checksums, publishing, CI |
+
+Documents 11 and 12 are deliberately separable work streams, coupled only by the artefact contract restated in both.
 
 ## Status
 
