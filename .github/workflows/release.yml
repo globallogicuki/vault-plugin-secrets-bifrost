@@ -1,0 +1,246 @@
+# Publish the plugin binaries for a vX.Y.Z tag.
+#
+# One job, so the binaries and their checksums are produced by the same run and
+# cannot diverge. Vault verifies the plugin's SHA256 on every plugin launch, so a
+# checksum computed anywhere other than alongside the build is a liability.
+#
+# Every guard runs before any build work and publishing is the last step, so a
+# failure leaves nothing half-released. See docs/12-build-and-release.md.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release, e.g. v0.1.0"
+        required: true
+        type: string
+      dry_run:
+        description: "Build and verify without publishing anything"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write # create the release and upload its assets
+  id-token: write # OIDC, for the provenance attestation only
+  attestations: write # write the provenance attestation only
+
+# Never interrupt a release mid-flight.
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      # The `v` belongs to the tag and to Vault's plugin catalogue; the bare
+      # X.Y.Z belongs to build filenames. This is the single place that converts.
+      - name: Resolve and validate the tag
+        id: rel
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_TAG:-$GITHUB_REF_NAME}"
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::tag '$TAG' is not vX.Y.Z or vX.Y.Z-prerelease"
+            exit 1
+          fi
+          case "$TAG" in
+            *-*) PRERELEASE=true ;;
+            *)   PRERELEASE=false ;;
+          esac
+          # dry_run exists only for workflow_dispatch; a tag push always publishes.
+          DRY_RUN="${INPUT_DRY_RUN:-false}"
+          {
+            echo "tag=$TAG"
+            echo "version=${TAG#v}"
+            echo "prerelease=$PRERELEASE"
+            echo "dry_run=$DRY_RUN"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing $TAG (version ${TAG#v}, prerelease=$PRERELEASE, dry_run=$DRY_RUN)"
+
+      # Build from the tag's content, never from a branch head.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.rel.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Check the tag is on main
+        env:
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor HEAD refs/remotes/origin/main; then
+            echo "::error::$TAG is not an ancestor of origin/main; releases are cut from main"
+            exit 1
+          fi
+
+      # Releases are never re-cut. action-gh-release would happily update an
+      # existing release, so this is the guard that enforces it.
+      - name: Check the release does not already exist
+        if: steps.rel.outputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::release $TAG already exists; cut a new patch tag instead"
+            exit 1
+          fi
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # A tag can point at a commit that never went through ci.yml, so re-check
+      # rather than assume. This is the one job that publishes.
+      - name: Format and vet
+        run: make lint
+
+      - name: Test with race detector
+        run: make test-ci
+
+      # A single invocation: `checksums` depends on `dist`, and both are .PHONY,
+      # so `make dist checksums` would cross-compile twice.
+      - name: Cross-compile and checksum
+        env:
+          VERSION: ${{ steps.rel.outputs.version }}
+        run: make checksums VERSION="$VERSION"
+
+      - name: Inspect the artefacts
+        env:
+          VERSION: ${{ steps.rel.outputs.version }}
+        run: |
+          set -euo pipefail
+          ls -l dist
+          {
+            echo '### Artefacts'
+            echo
+            echo '```'
+            for f in "dist/vault-plugin-secrets-bifrost_${VERSION}_linux_"*; do
+              printf '%s: %s\n' "$(basename "$f")" "$(file -b "$f")"
+            done
+            echo '```'
+            echo
+            echo '### SHA256SUMS'
+            echo
+            echo '```'
+            cat dist/SHA256SUMS
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: SBOM for linux/amd64
+        uses: anchore/sbom-action@v0.24.0
+        with:
+          file: dist/vault-plugin-secrets-bifrost_${{ steps.rel.outputs.version }}_linux_amd64
+          format: spdx-json
+          output-file: dist/vault-plugin-secrets-bifrost_${{ steps.rel.outputs.version }}_linux_amd64.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: SBOM for linux/arm64
+        uses: anchore/sbom-action@v0.24.0
+        with:
+          file: dist/vault-plugin-secrets-bifrost_${{ steps.rel.outputs.version }}_linux_arm64
+          format: spdx-json
+          output-file: dist/vault-plugin-secrets-bifrost_${{ steps.rel.outputs.version }}_linux_arm64.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Attest build provenance
+        if: steps.rel.outputs.dry_run != 'true'
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            dist/vault-plugin-secrets-bifrost_${{ steps.rel.outputs.version }}_linux_amd64
+            dist/vault-plugin-secrets-bifrost_${{ steps.rel.outputs.version }}_linux_arm64
+
+      # Written with placeholders and substituted, so the $(...) in the snippet
+      # reaches the reader intact instead of being run here.
+      - name: Compose install instructions
+        env:
+          TAG: ${{ steps.rel.outputs.tag }}
+          VERSION: ${{ steps.rel.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<'TEMPLATE'
+          ## Install
+
+          Vault plugins are native binaries. Pick the architecture of the Vault
+          container or host, verify it, then register it.
+
+          ```sh
+          ARCH=amd64   # or arm64
+          BASE=https://github.com/__REPO__/releases/download/__TAG__
+
+          curl -fsSLO "$BASE/vault-plugin-secrets-bifrost___VERSION___linux_$ARCH"
+          curl -fsSLO "$BASE/SHA256SUMS"
+          sha256sum --ignore-missing -c SHA256SUMS
+
+          # Optional: verify the build provenance attestation.
+          gh attestation verify "vault-plugin-secrets-bifrost___VERSION___linux_$ARCH" \
+              --repo __REPO__
+
+          install -m 0755 "vault-plugin-secrets-bifrost___VERSION___linux_$ARCH" \
+              "$VAULT_PLUGIN_DIR/vault-plugin-secrets-bifrost"
+
+          vault plugin register \
+              -sha256="$(awk -v a="$ARCH" '$2 ~ "_linux_"a"$" {print $1}' SHA256SUMS)" \
+              -version=__TAG__ \
+              secret vault-plugin-secrets-bifrost
+          ```
+
+          See [docs/11-kubernetes-deployment.md](https://github.com/__REPO__/blob/__TAG__/docs/11-kubernetes-deployment.md)
+          for deploying into a Vault cluster on Kubernetes.
+
+          `SHA256SUMS` covers the two binaries. The `.spdx.json` files are SPDX
+          SBOMs for each binary.
+          TEMPLATE
+          sed -i "s|__REPO__|$REPO|g; s|__TAG__|$TAG|g; s|__VERSION__|$VERSION|g" release-notes.md
+          cat release-notes.md
+
+      # Assets are listed explicitly rather than globbed from dist/, so a broken
+      # VERSION derivation fails the run instead of publishing mislabelled files.
+      - name: Create the release
+        if: steps.rel.outputs.dry_run != 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.rel.outputs.tag }}
+          name: ${{ steps.rel.outputs.tag }}
+          body_path: release-notes.md
+          append_body: true
+          generate_release_notes: true
+          prerelease: ${{ steps.rel.outputs.prerelease }}
+          make_latest: ${{ steps.rel.outputs.prerelease == 'false' }}
+          fail_on_unmatched_files: true
+          files: |
+            dist/vault-plugin-secrets-bifrost_${{ steps.rel.outputs.version }}_linux_amd64
+            dist/vault-plugin-secrets-bifrost_${{ steps.rel.outputs.version }}_linux_arm64
+            dist/vault-plugin-secrets-bifrost_${{ steps.rel.outputs.version }}_linux_amd64.spdx.json
+            dist/vault-plugin-secrets-bifrost_${{ steps.rel.outputs.version }}_linux_arm64.spdx.json
+            dist/SHA256SUMS
+
+      - name: Dry run summary
+        if: steps.rel.outputs.dry_run == 'true'
+        env:
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          {
+            echo "### Dry run"
+            echo
+            echo "Built and verified $TAG. No release, assets or attestation were published."
+          } >> "$GITHUB_STEP_SUMMARY"
