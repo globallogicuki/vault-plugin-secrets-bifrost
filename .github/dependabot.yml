@@ -29,9 +29,14 @@ updates:
           - github.com/hashicorp/vault/api
           - github.com/hashicorp/vault/sdk
       # Roughly a hundred indirect dependencies come in via the Vault SDK.
-      # Batch their minor and patch bumps so they cannot flood the queue.
-      indirect-minor-patch:
-        dependency-type: indirect
+      # Batch every minor and patch bump so they cannot flood the queue; majors
+      # still arrive as individual PRs, which is what you want for review.
+      #
+      # Groups are matched in order and the first match wins, so the Vault pair
+      # above is not swallowed by this one. `dependency-type: indirect` is NOT
+      # valid inside a group (only production/development are, and Go has no
+      # dev/prod split, so it would match everything regardless).
+      minor-and-patch:
         update-types:
           - minor
           - patch
