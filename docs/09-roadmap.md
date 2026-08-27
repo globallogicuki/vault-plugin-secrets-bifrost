@@ -6,7 +6,8 @@ Phased delivery. Each phase is independently useful and leaves the plugin in a s
 
 - [x] Repo, README, licence (MPL-2.0).
 - [x] This design framework (`docs/`).
-- [ ] Resolve open questions (below) and confirm module path.
+- [x] Confirm module path (`github.com/globallogicuki/vault-plugin-secrets-bifrost`).
+- [ ] Resolve the remaining open questions (below).
 
 ## Phase 1 - MVP: dynamic virtual keys
 
@@ -19,8 +20,13 @@ Goal: `vault read bifrost/creds/<role>` issues and auto-revokes a Bifrost virtua
 - Bifrost client (create/get/update/delete VK) with error/idempotency handling.
 - WAL rollback for orphan prevention.
 - Unit + backend (mock Bifrost) tests; dev harness + Makefile.
+- **Release engineering:** lint/test/build CI on every push, and a `vX.Y.Z` tag that publishes verified `linux/amd64` + `linux/arm64` binaries with `SHA256SUMS`, SBOMs and build provenance. See [12](./12-build-and-release.md).
 
-**Exit criteria:** end-to-end issue → use → lease-revoke → key-invalid, verified against a real Bifrost.
+**Exit criteria:**
+
+1. End-to-end issue → use → lease-revoke → key-invalid, verified against a real Bifrost.
+2. A `v0.1.0` tag produces release assets whose checksums match a local `make checksums` build of the same commit on the pinned toolchain.
+3. A Vault cluster registers and enables the published binary by following [11](./11-kubernetes-deployment.md) verbatim.
 
 ## Phase 2 - Provider API keys
 
@@ -52,10 +58,17 @@ Goal: manage the lifecycle of long-lived, shared credentials Vault didn't origin
 |---|----------|-------|--------|
 | 1 | Can Bifrost's management API programmatically **create and revoke management tokens**? Required for fully **automatic** root rotation; without it, rotation is operator-assisted. | - | automatic root rotation (Phase 1) |
 | 2 | Exact **pinned Bifrost API version** and any request-schema drift vs. the docs. | - | client implementation |
-| 3 | `go.mod` **module path** (`github.com/<org>/vault-plugin-secrets-bifrost`). | - | repo init of Go module |
-| 4 | Are **scoped** management tokens available (VK-only) for least privilege? | - | security posture |
-| 5 | Should MVP set `expires_at` backstop by default? (design says yes) | - | role defaults |
+| 3 | Are **scoped** management tokens available (VK-only) for least privilege? | - | security posture |
+| 4 | Should MVP set `expires_at` backstop by default? (design says yes) | - | role defaults |
 
 ## Non-goals recap
 
 Re-implementing Bifrost's native `vault.<path>` **consumption** backend, RBAC/user management, and a Vault **auth method** are explicitly out of scope (see [01](./01-overview.md)).
+
+## Deferred, with a recorded trigger
+
+| Item | Deferred because | Revisit when |
+|------|------------------|--------------|
+| Plugin-carrying OCI image | Vault execs a native binary and never pulls an image, so the image was only a transport. See [12](./12-build-and-release.md) | A target cluster has no egress to `github.com`, or requires digest-pinned references |
+| Acceptance tests in CI | No Bifrost instance to point at, and a fork-triggered run would leak a real management token. See [08](./08-testing-and-dev.md) | A dedicated Bifrost test tenant exists |
+| Plugin version reported to Vault | Needs a version compiled in via `-ldflags -X`, which changes the binary's checksum | Any release after the first, as a deliberate checksum-changing change |
