@@ -10,7 +10,7 @@ This document covers the **producer** side only. Deploying a published artefact 
 |------------|----------------|
 | Cross-compilation and its flags | Helm values, `plugin_directory` |
 | Publishing release assets | `vault plugin register` / `secrets enable` |
-| Version/tag scheme | Cluster egress and pull credentials |
+| Version/tag scheme, and deriving it from commit types | Cluster egress and pull credentials |
 | Emitting checksums, SBOMs, provenance | Mount paths, roles, engine config |
 | Lint and test gates before publishing | Choosing when to upgrade a cluster |
 
@@ -33,6 +33,21 @@ Restated from [11](./11-kubernetes-deployment.md) - the only coupling between th
 Breaking any row is a breaking change for the deploy stream.
 
 `SHA256SUMS` lists both binaries, so the consumer extracts the line it needs rather than being handed a hash out of band.
+
+## How the version is chosen
+
+Versions are derived from [Conventional Commits](https://www.conventionalcommits.org/), the style `CLAUDE.md` already mandates. That style is therefore load-bearing: a mistyped type changes the version, or suppresses a release.
+
+| Commit landing on main | Effect on the next version |
+|------------------------|----------------------------|
+| `feat:` | Minor bump, `0.1.0` -> `0.2.0` |
+| `fix:`, `perf:` | Patch bump, `0.1.0` -> `0.1.1` |
+| `feat!:`, or a `BREAKING CHANGE:` footer | Minor while below 1.0.0, major once past it (`bump-minor-pre-major`) |
+| `docs:`, `refactor:`, `test:`, `build:`, `ci:`, `chore:`, `style:` | None. No release is proposed. |
+
+`release-please-config.json` holds the rules and the changelog sections. `.release-please-manifest.json` holds the current version and is rewritten by each release commit; it is seeded at `0.1.0` so the first proposal is `0.2.0` rather than release-please's default of `1.0.0`.
+
+To override a computed version once, put a `Release-As: 1.0.0` footer on a commit to `main`.
 
 ## Version strings
 
@@ -94,7 +109,7 @@ With no `VERSION` given, the Makefile derives it from the nearest git tag with t
 
 ## CI
 
-Two workflows, both thin wrappers over `make` so the build flags live in exactly one place.
+Three workflows, all thin wrappers over `make` so the build flags live in exactly one place.
 
 ### Every pull request and push to main - `.github/workflows/ci.yml`
 
@@ -106,19 +121,53 @@ Two workflows, both thin wrappers over `make` so the build flags live in exactly
 
 Three jobs rather than one, so a lint failure cannot mask a test failure. The `build` job calls the release build path rather than its own compile loop, so a cross-compilation break surfaces on the pull request instead of on a tag.
 
-### On a `vX.Y.Z` tag - `.github/workflows/release.yml`
+### On a merge to main - `.github/workflows/release-please.yml`
 
-One job, so the binaries and their checksums are produced by the same run.
+Releasing takes two merges, with a human between them.
 
 ```mermaid
 flowchart TD
-    A[git tag vX.Y.Z] --> B[Resolve tag<br/>semver regex, derive VERSION]
-    B --> C[Guards<br/>checkout at tag, ancestor of main,<br/>release does not exist]
+    A[Merge any PR to main] --> B[release-please reads the<br/>commits since the last release]
+    B --> C{Any feat, fix or breaking change?}
+    C -->|No| D[Nothing happens]
+    C -->|Yes| E[Open or update the PR<br/>chore main: release X.Y.Z]
+    E --> F[A human reviews the<br/>version and the changelog]
+    F --> G[Merge the release PR]
+    G --> H[Tag vX.Y.Z, create the<br/>release and its notes]
+    H --> I[Call release.yml with<br/>attach_to_existing]
+    I --> J[Build, then upload binaries,<br/>SHA256SUMS and SBOMs]
+```
+
+The release PR is the approval gate, and it accumulates: every further merge to `main` rewrites its version and changelog until it is merged or closed. So a merge to `main` never publishes on its own - merging the release PR does.
+
+`release.yml` is invoked with `uses:` rather than left to fire on the tag push. **A tag or release created with `GITHUB_TOKEN` does not trigger other workflows** - GitHub's recursive-workflow prevention - so a tag trigger would silently do nothing here. Calling it directly keeps the build logic in one file and needs no PAT or GitHub App token.
+
+One consequence: release-please creates the release *before* the binaries exist, so for a few minutes the release is visible with no assets. If the build then fails, the release stays asset-free. See the playbook.
+
+### Building and publishing - `.github/workflows/release.yml`
+
+One job, so the binaries and their checksums are produced by the same run. Three entry points, one code path:
+
+| Entry point | Creates the release | Publishes |
+|-------------|---------------------|-----------|
+| Called by `release-please.yml` - the normal path | No, it already exists | Yes |
+| A `vX.Y.Z` tag pushed by hand | Yes | Yes |
+| `workflow_dispatch` | Yes, unless `dry_run` | Only when `dry_run=false` |
+
+The hand-pushed tag path stays for two reasons: the first release has to be cut before release-please has anything to count from, and a prerelease rehearsal such as `v0.1.0-rc.1` is not a decision Conventional Commits should be making.
+
+```mermaid
+flowchart TD
+    A[Tag vX.Y.Z, by hand or<br/>from release-please] --> B[Resolve tag<br/>semver regex, derive VERSION]
+    B --> C[Guards<br/>checkout at tag, ancestor of main,<br/>release present or absent as expected]
     C --> D[make lint + make test-ci]
     D --> E[make checksums VERSION=X.Y.Z]
     E --> F[SBOM per binary<br/>provenance attestation]
-    F --> G[Create release<br/>binaries, SHA256SUMS, SBOMs]
-    G --> H[Deploy stream consumes<br/>see doc 11]
+    F --> G{Does the release exist?}
+    G -->|No| H[Create it, with the assets]
+    G -->|Yes| I[Upload the assets to it]
+    H --> J[Deploy stream consumes<br/>see doc 11]
+    I --> J
 ```
 
 Every guard runs before any build work and publishing is the last step, so a failure leaves nothing half-released:
@@ -126,12 +175,12 @@ Every guard runs before any build work and publishing is the last step, so a fai
 1. **Tag shape.** Must match `vX.Y.Z` or `vX.Y.Z-prerelease`. This also rejects a tag crafted to inject shell.
 2. **Checkout at the tag**, never at a branch head.
 3. **Ancestry.** The tagged commit must be an ancestor of `origin/main`, so a release cannot be cut from a stray branch.
-4. **No existing release.** `softprops/action-gh-release` would happily *update* an existing release, so this guard is what enforces the immutability row of the contract.
+4. **Release existence, in whichever direction applies.** When creating, the release must *not* exist: `softprops/action-gh-release` would happily *update* one, so this guard is what enforces the immutability row of the contract. When attaching, it must exist - absence means the caller passed a tag that was never released.
 5. **Lint and test.** Repeated here because a tag can point at a commit that never went through `ci.yml`.
 
-A tag containing a hyphen is published as a prerelease and does not become "latest", so `v0.1.0-rc.1` is a safe full-fidelity rehearsal.
+A tag containing a hyphen is published as a prerelease and does not become "latest", so `v0.1.0-rc.1` is a safe full-fidelity rehearsal. release-please never produces one.
 
-Assets are listed explicitly rather than globbed from `dist/`, so a broken `VERSION` derivation fails the run instead of publishing mislabelled files.
+Assets are listed explicitly rather than globbed from `dist/`, so a broken `VERSION` derivation fails the run instead of publishing mislabelled files. The attach path checks each expected file is present before uploading, because `gh release upload` has no equivalent of `fail_on_unmatched_files`.
 
 ### Rehearsing a release
 
@@ -142,8 +191,10 @@ Assets are listed explicitly rather than globbed from `dist/`, so a broken `VERS
 | When it failed | What to do |
 |----------------|------------|
 | Before the release was created | Re-run. Nothing was published. |
-| After the release was created | Do not re-cut. Publish a new patch tag. |
+| While attaching assets to a release-please release | Re-run the `publish` job. Uploads use `--clobber`, and the install notes are appended only once, guarded by a marker - so a re-run is safe. |
+| After a hand-cut release was created | Do not re-cut. Publish a new patch tag. |
 | Guard rejected the tag | Fix the tag name, or the branch it points at, and tag again. |
+| release-please proposed the wrong version | Close the release PR, or override it with a `Release-As: X.Y.Z` footer on a commit to `main`. |
 
 ## Deferred: the OCI image
 

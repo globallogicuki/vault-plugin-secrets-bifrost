@@ -91,6 +91,8 @@ Rotate the management token on demand with `vault write bifrost/config/rotate-ro
 
 Releases publish static `linux/amd64` and `linux/arm64` binaries with a `SHA256SUMS` file, an SPDX SBOM per binary, and a SLSA build provenance attestation. There is no container image - Vault `exec`s a native binary from `plugin_directory` and never pulls one.
 
+Versions come from [Conventional Commits](https://www.conventionalcommits.org/): merging to `main` grooms a release pull request, and merging that pull request cuts the tag and publishes the assets. See [`docs/12-build-and-release.md`](./docs/12-build-and-release.md).
+
 ```sh
 TAG=v0.1.0
 REPO=globallogicuki/vault-plugin-secrets-bifrost

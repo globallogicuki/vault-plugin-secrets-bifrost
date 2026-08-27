@@ -20,13 +20,14 @@ Goal: `vault read bifrost/creds/<role>` issues and auto-revokes a Bifrost virtua
 - Bifrost client (create/get/update/delete VK) with error/idempotency handling.
 - WAL rollback for orphan prevention.
 - Unit + backend (mock Bifrost) tests; dev harness + Makefile.
-- **Release engineering:** lint/test/build CI on every push, and a `vX.Y.Z` tag that publishes verified `linux/amd64` + `linux/arm64` binaries with `SHA256SUMS`, SBOMs and build provenance. See [12](./12-build-and-release.md).
+- **Release engineering:** lint/test/build CI on every push, and Conventional-Commit-driven releases - a merge to `main` grooms a release PR, merging that PR publishes verified `linux/amd64` + `linux/arm64` binaries with `SHA256SUMS`, SBOMs and build provenance. See [12](./12-build-and-release.md).
 
 **Exit criteria:**
 
 1. End-to-end issue → use → lease-revoke → key-invalid, verified against a real Bifrost.
 2. A `v0.1.0` tag produces release assets whose checksums match a local `make checksums` build of the same commit on the pinned toolchain.
-3. A Vault cluster registers and enables the published binary by following [11](./11-kubernetes-deployment.md) verbatim.
+3. Merging a release PR produced by release-please publishes the same asset set, with no manual tagging.
+4. A Vault cluster registers and enables the published binary by following [11](./11-kubernetes-deployment.md) verbatim.
 
 ## Phase 2 - Provider API keys
 

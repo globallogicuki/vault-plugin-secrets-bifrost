@@ -35,6 +35,8 @@ Apply these conventions to the README, all files under `docs/`, and any new Mark
 
 ## Commits
 
+Commit types drive release versions: `release-please` reads the commits merged to `main` and proposes the next version from them. `feat` bumps the minor, `fix` and `perf` the patch, `feat!` or a `BREAKING CHANGE:` footer the minor while below 1.0.0; everything else releases nothing. Getting the type wrong therefore ships the wrong version number. See `docs/12-build-and-release.md`.
+
 - Use **[Conventional Commits](https://www.conventionalcommits.org/)**: `type(scope): subject`.
   - **Types:** `feat`, `fix`, `docs`, `refactor`, `test`, `build`, `chore`, `ci`, `perf`, `style`, `revert`.
   - **Scope** is optional and names the affected area, e.g. `feat(creds):`, `docs(api-spec):`, `fix(client):`.
