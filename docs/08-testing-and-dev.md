@@ -63,7 +63,7 @@ A `docker-compose.yml` (dev) can stand up Bifrost + Vault together for one-comma
 
 ## CI
 
-Two workflows, both thin wrappers over `make` so build flags exist in one place only. See [12](./12-build-and-release.md) for the release side.
+Three workflows, all thin wrappers over `make` so build flags exist in one place only. See [12](./12-build-and-release.md) for the release side.
 
 ### Every pull request and push to main - `.github/workflows/ci.yml`
 
@@ -77,9 +77,17 @@ Three jobs rather than one, so a lint failure cannot mask a test failure. The `b
 
 **No Go version matrix.** `go.mod` pins the toolchain, this is a single binary artefact rather than a library consumed at many Go versions, and the release binary's checksum is toolchain-dependent - so one pinned toolchain is the point. `GOTOOLCHAIN: local` is set so a mismatch fails loudly instead of silently downloading a different toolchain.
 
-### On a `vX.Y.Z` tag - `.github/workflows/release.yml`
+### On a merge to main - `.github/workflows/release-please.yml`
 
-Guards, then `make lint` and `make test-ci`, then `make checksums`, then SBOM and provenance, then the release. Full description in [12](./12-build-and-release.md).
+Reads the Conventional Commits since the last release and keeps a `chore(main): release X.Y.Z` pull request up to date. Merging *that* PR tags the release and calls `release.yml`. Nothing publishes on a plain merge to `main`.
+
+The practical consequence for day-to-day work: **commit types now decide version numbers.** `feat:` bumps the minor, `fix:` the patch, and `docs:`/`ci:`/`chore:` release nothing. The commit convention in `CLAUDE.md` was already required; it is now load-bearing.
+
+`CHANGELOG.md` and `.release-please-manifest.json` are generated. Do not edit them by hand - the next release commit will overwrite both.
+
+### Building and publishing - `.github/workflows/release.yml`
+
+Guards, then `make lint` and `make test-ci`, then `make checksums`, then SBOM and provenance, then the release. Called by `release-please.yml`, and also triggerable by a hand-pushed `vX.Y.Z` tag or a `workflow_dispatch` dry run. Full description in [12](./12-build-and-release.md).
 
 ### Linting
 
