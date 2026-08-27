@@ -1,0 +1,70 @@
+# golangci-lint v2 configuration. The schema differs from v1 (linters.default,
+# linters.settings, linters.exclusions, and a separate top-level formatters
+# block), and golangci-lint-action v9 requires v2 >= 2.1.0.
+#
+# `make lint` deliberately does not run this - it must work with only the Go
+# toolchain installed. Run `make lint-golangci` locally, or rely on CI, which
+# runs both. See docs/08-testing-and-dev.md.
+version: "2"
+
+run:
+  timeout: 5m
+  # Lint test files too: the mock Bifrost server and backend tests are where
+  # most of the HTTP handling lives.
+  tests: true
+
+linters:
+  # errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  enable:
+    - bodyclose      # HTTP response bodies must be closed
+    - noctx          # every outbound Bifrost call must carry a context
+    - errorlint      # %w wrapping, errors.Is/As over == and type assertions
+    - nilerr         # returning nil after checking a non-nil error
+    - copyloopvar
+    - unconvert
+    - unparam
+    - usestdlibvars  # http.MethodGet over "GET", http.StatusOK over 200
+    - wastedassign
+    - misspell
+    - gosec
+    - nolintlint     # every //nolint must say why
+
+  settings:
+    misspell:
+      # British English, per CLAUDE.md.
+      locale: UK
+      # HTTP wire literals keep their original spelling, as CLAUDE.md already
+      # exempts the Authorization header. "unauthorized" here is the body of a
+      # 401 response mimicking Bifrost, not prose.
+      ignore-rules:
+        - unauthorized
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
+
+  exclusions:
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      # Test fixtures use hard-coded fake tokens (gosec G101) and deliberately
+      # ignore errors and unused parameters for brevity.
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
+          - unparam
+          - bodyclose
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/globallogicuki/vault-plugin-secrets-bifrost
