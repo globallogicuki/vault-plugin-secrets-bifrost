@@ -41,11 +41,26 @@ Versions are derived from [Conventional Commits](https://www.conventionalcommits
 | Commit landing on main | Effect on the next version |
 |------------------------|----------------------------|
 | `feat:` | Minor bump, `0.1.0` -> `0.2.0` |
-| `fix:`, `perf:` | Patch bump, `0.1.0` -> `0.1.1` |
+| `fix:`, `perf:`, `revert:` | Patch bump, `0.1.0` -> `0.1.1` |
 | `feat!:`, or a `BREAKING CHANGE:` footer | Minor while below 1.0.0, major once past it (`bump-minor-pre-major`) |
 | `docs:`, `refactor:`, `test:`, `build:`, `ci:`, `chore:`, `style:` | None. No release is proposed. |
 
-`release-please-config.json` holds the rules and the changelog sections. `.release-please-manifest.json` holds the current version and is rewritten by each release commit; it is seeded at `0.1.0` so the first proposal is `0.2.0` rather than release-please's default of `1.0.0`.
+That bottom row is **not** a property of the commit types. It is a property of `changelog-sections` in `release-please-config.json`:
+
+- release-please filters the commits since the last release down to those whose type has a **visible** section, plus any breaking change;
+- if nothing survives, no release is proposed;
+- of what survives, a breaking change bumps major (minor below 1.0.0), `feat` bumps minor, and **everything else bumps the patch**.
+
+So marking a section visible makes that type cut releases. `docs:`, `refactor:` and `build:` are `hidden: true` for exactly that reason - a typo fix should not republish binaries that Vault checksum-verifies. Make one of them visible and it will start cutting patch releases. This bit us once: see the playbook.
+
+`release-please-config.json` holds those rules. Two settings in it are load-bearing and easy to lose:
+
+| Setting | Why it is set explicitly |
+|---------|--------------------------|
+| `include-component-in-tag: false` | **Defaults to `true`.** Left unset, and with a `package-name` to draw a component from, tags come out as `vault-plugin-secrets-bifrost-v0.1.1`, which fails `release.yml`'s semver guard *after* the release has already been created. |
+| `include-v-in-tag: true` | The artefact contract's tags are `vX.Y.Z`. |
+
+`.release-please-manifest.json` holds the current version and is rewritten by each release commit; it is seeded at `0.1.0` so the first proposal is `0.2.0` rather than release-please's default of `1.0.0`.
 
 To override a computed version once, put a `Release-As: 1.0.0` footer on a commit to `main`.
 
@@ -195,6 +210,8 @@ Assets are listed explicitly rather than globbed from `dist/`, so a broken `VERS
 | After a hand-cut release was created | Do not re-cut. Publish a new patch tag. |
 | Guard rejected the tag | Fix the tag name, or the branch it points at, and tag again. |
 | release-please proposed the wrong version | Close the release PR, or override it with a `Release-As: X.Y.Z` footer on a commit to `main`. |
+| release-please tagged something that is not `vX.Y.Z` | A `release-please-config.json` regression, almost certainly `include-component-in-tag`. The release exists and the build never ran, so: fix the config, delete the bad tag and its release, reset `.release-please-manifest.json` and `CHANGELOG.md` to the last good version, then let the next merge propose again. Nothing was published, so nothing downstream can break. |
+| A type that should not release cut one | Mark its `changelog-sections` entry `hidden: true`, then treat the stray release as above. |
 
 ## Deferred: the OCI image
 

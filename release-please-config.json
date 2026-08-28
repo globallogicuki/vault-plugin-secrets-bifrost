@@ -5,9 +5,9 @@
     { "type": "fix", "section": "Bug fixes" },
     { "type": "perf", "section": "Performance" },
     { "type": "revert", "section": "Reverts" },
-    { "type": "refactor", "section": "Refactoring" },
-    { "type": "docs", "section": "Documentation" },
-    { "type": "build", "section": "Build" },
+    { "type": "docs", "section": "Documentation", "hidden": true },
+    { "type": "refactor", "section": "Refactoring", "hidden": true },
+    { "type": "build", "section": "Build", "hidden": true },
     { "type": "ci", "section": "CI", "hidden": true },
     { "type": "test", "section": "Tests", "hidden": true },
     { "type": "chore", "section": "Chores", "hidden": true },
@@ -16,8 +16,8 @@
   "packages": {
     ".": {
       "release-type": "go",
-      "package-name": "vault-plugin-secrets-bifrost",
       "changelog-path": "CHANGELOG.md",
+      "include-component-in-tag": false,
       "include-v-in-tag": true,
       "bump-minor-pre-major": true,
       "draft": false,
