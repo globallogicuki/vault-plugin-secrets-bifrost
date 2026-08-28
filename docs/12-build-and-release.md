@@ -97,16 +97,19 @@ Any change to these flags changes the binary's SHA256. Since Vault verifies that
 
 Verified by building the same commit in two independent clean clones at different paths: the binaries were byte-identical.
 
-The binary embeds Go build info, including `vcs.revision`, `vcs.time` and `vcs.modified`. The SHA256 is therefore a function of:
+The binary embeds Go build info, including `vcs.revision`, `vcs.time`, `vcs.modified` and - since Go 1.24 - the main module's version, taken from the highest semver tag reachable at build time. The SHA256 is therefore a function of:
 
 - the commit,
 - a clean worktree,
+- **the tag**, via the stamped `mod` version,
 - the Go patch release (`go` directive in `go.mod`),
 - `GOOS`/`GOARCH`.
 
-It is **not** a function of source content alone, and `VERSION` affects only the filename, never the bytes. Practical consequences:
+It is **not** a function of source content alone. The make `VERSION` variable affects only the filename, but the *tag* changes the bytes: building `v0.1.0` and `v0.1.0-rc.1` from one commit gives two different checksums, because the first stamps `mod ... v0.1.0` and the second `mod ... v0.1.0-rc.1`. Confirm with `go version -m <binary>`. This is the desired behaviour - a released binary names the release it belongs to - but it means a rehearsal's checksums never carry over to the real tag.
 
-- Anyone can reproduce a published checksum: clone, `git checkout vX.Y.Z`, `make checksums VERSION=X.Y.Z` on the pinned Go version.
+Practical consequences:
+
+- Anyone can reproduce a published checksum: clone, `git checkout vX.Y.Z`, `make checksums VERSION=X.Y.Z` on the pinned Go version. The checkout must bring the tag with it, or the stamped version differs and so will the hash.
 - A build from a **dirty** tree sets `vcs.modified=true` and will not match, by design.
 - A build from a linked `git worktree` gets no VCS stamping at all (`mod (devel)`) and will not match either. Use a clone when comparing checksums.
 - `go version -m <binary>` names the commit a binary came from, which is why VCS stamping is left on.
