@@ -81,7 +81,7 @@ Three jobs rather than one, so a lint failure cannot mask a test failure. The `b
 
 Reads the Conventional Commits since the last release and keeps a `chore(main): release X.Y.Z` pull request up to date. Merging *that* PR tags the release and calls `release.yml`. Nothing publishes on a plain merge to `main`.
 
-The practical consequence for day-to-day work: **commit types now decide version numbers.** `feat:` bumps the minor, `fix:` the patch, and `docs:`/`ci:`/`chore:` release nothing. The commit convention in `CLAUDE.md` was already required; it is now load-bearing.
+The practical consequence for day-to-day work: **commit types now decide version numbers.** `feat:` bumps the minor, `fix:` the patch, and `docs:`/`ci:`/`chore:` release nothing. The commit convention in `CLAUDE.md` was already required; it is now load-bearing. Which types release nothing is set by the hidden `changelog-sections` entries in `release-please-config.json`, not by release-please's own defaults - do not make one visible without reading [12](./12-build-and-release.md) first.
 
 `CHANGELOG.md` and `.release-please-manifest.json` are generated. Do not edit them by hand - the next release commit will overwrite both.
 
