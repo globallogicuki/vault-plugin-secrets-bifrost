@@ -201,6 +201,17 @@ Assets are listed explicitly rather than globbed from `dist/`, so a broken `VERS
 
 `release.yml` also accepts `workflow_dispatch` with a `tag` and a `dry_run` flag that defaults to true. A dry run exercises tag resolution, the ancestry guard, lint, test, the cross-compile, checksums and SBOM generation, and publishes nothing - no release, no assets, no attestation. Checksums appear in the run summary.
 
+**The dispatched tag must already exist.** The workflow checks out at it, so dispatching a tag that has not been pushed fails at the checkout step with `couldn't find remote ref`. A dry run re-verifies an existing tag; it cannot rehearse a version that has never been tagged.
+
+To rehearse before the version exists, push a prerelease tag. It publishes for real, but a tag containing a hyphen is marked prerelease and never becomes "latest", so it exercises the whole create path without claiming to be the release:
+
+```sh
+git tag v0.1.0-rc.1 && git push origin v0.1.0-rc.1
+gh release view v0.1.0-rc.1 --json assets -q '.assets[].name'
+```
+
+That is also how the first release is rehearsed, since there is no earlier tag to dry-run against.
+
 ### Failure playbook
 
 | When it failed | What to do |
@@ -209,6 +220,7 @@ Assets are listed explicitly rather than globbed from `dist/`, so a broken `VERS
 | While attaching assets to a release-please release | Re-run the `publish` job. Uploads use `--clobber`, and the install notes are appended only once, guarded by a marker - so a re-run is safe. |
 | After a hand-cut release was created | Do not re-cut. Publish a new patch tag. |
 | Guard rejected the tag | Fix the tag name, or the branch it points at, and tag again. |
+| `workflow_dispatch` failed at checkout with `couldn't find remote ref` | The dispatched tag does not exist. Push the tag first, or rehearse with a prerelease tag. |
 | release-please proposed the wrong version | Close the release PR, or override it with a `Release-As: X.Y.Z` footer on a commit to `main`. |
 | release-please tagged something that is not `vX.Y.Z` | A `release-please-config.json` regression, almost certainly `include-component-in-tag`. The release exists and the build never ran, so: fix the config, delete the bad tag and its release, reset `.release-please-manifest.json` and `CHANGELOG.md` to the last good version, then let the next merge propose again. Nothing was published, so nothing downstream can break. |
 | A type that should not release cut one | Mark its `changelog-sections` entry `hidden: true`, then treat the stray release as above. |

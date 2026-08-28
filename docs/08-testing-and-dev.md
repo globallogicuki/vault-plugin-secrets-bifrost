@@ -87,7 +87,7 @@ The practical consequence for day-to-day work: **commit types now decide version
 
 ### Building and publishing - `.github/workflows/release.yml`
 
-Guards, then `make lint` and `make test-ci`, then `make checksums`, then SBOM and provenance, then the release. Called by `release-please.yml`, and also triggerable by a hand-pushed `vX.Y.Z` tag or a `workflow_dispatch` dry run. Full description in [12](./12-build-and-release.md).
+Guards, then `make lint` and `make test-ci`, then `make checksums`, then SBOM and provenance, then the release. Called by `release-please.yml`, and also triggerable by a hand-pushed `vX.Y.Z` tag or a `workflow_dispatch` dry run against a tag that already exists. Full description in [12](./12-build-and-release.md).
 
 ### Linting
 
