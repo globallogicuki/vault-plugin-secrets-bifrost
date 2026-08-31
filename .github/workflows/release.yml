@@ -184,7 +184,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: SBOM for linux/amd64
-        uses: anchore/sbom-action@v0.24.0
+        uses: anchore/sbom-action@v0.24.2
         with:
           file: dist/vault-plugin-secrets-bifrost_${{ steps.rel.outputs.version }}_linux_amd64
           format: spdx-json
@@ -193,7 +193,7 @@ jobs:
           upload-release-assets: false
 
       - name: SBOM for linux/arm64
-        uses: anchore/sbom-action@v0.24.0
+        uses: anchore/sbom-action@v0.24.2
         with:
           file: dist/vault-plugin-secrets-bifrost_${{ steps.rel.outputs.version }}_linux_arm64
           format: spdx-json
